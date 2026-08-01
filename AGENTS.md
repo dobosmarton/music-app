@@ -2,14 +2,15 @@
 
 ## Vendored source is read-only reference
 
-`.repos/effect` is the Effect source, vendored as a squashed git subtree so that it can
-be read locally when an API needs verifying.
+`.repos/effect` is the Effect source, cloned locally so it can be read when an API needs
+verifying. It is **gitignored** — three thousand files of someone else's source do not
+belong in this repository's history. `pnpm install` fetches it via the `prepare` script,
+or run `./scripts/prepare-effect.sh` directly.
 
 - Read it to check signatures, behaviour and canonical patterns.
 - **Never import from it.** Runtime code imports from `effect` and `@effect/*` in
   `node_modules`, always.
-- Do not edit anything under `.repos/`. Update it with
-  `git subtree pull --prefix=.repos/effect https://github.com/Effect-TS/effect.git main --squash`.
+- Do not edit anything under `.repos/`. Update it with `git -C .repos/effect pull`.
 
 ## Effect conventions
 

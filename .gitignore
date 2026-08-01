@@ -3,3 +3,7 @@ dist/
 .env
 *.log
 .DS_Store
+
+# Vendored Effect source, cloned on demand by scripts/prepare-effect.sh.
+# Read-only reference material — it does not belong in this repository's history.
+.repos/effect
