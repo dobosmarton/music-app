@@ -23,6 +23,28 @@ or run `./scripts/prepare-effect.sh` directly.
 - SQL goes through `SqlClient`; migrations go through `Migrator`. No raw driver calls in
   business code, no hand-rolled transactions.
 
+## Formatting and linting
+
+`pnpm format` (dprint) and `pnpm lint` (oxlint type-aware, then a dprint check). The dprint
+config is Effect's own, so our code and the vendored source we read are formatted alike.
+
+oxlint rather than ESLint for a specific reason: we are pinned to TypeScript 7, and
+typescript-eslint does not support it — running it would mean installing TypeScript 6
+alongside, purely for the linter. oxlint's type-aware engine targets TS 7 directly.
+
+Three rules are switched off in `.oxlintrc.json`, all because they fight Effect's idioms
+rather than because they found something we did not want to fix:
+
+- `no-underscore-dangle` — `_tag` is Effect's tagged-union convention, used everywhere.
+- `no-shadow` — `layer(...)((it) => ...)` deliberately shadows `it`; that is the documented
+  `@effect/vitest` pattern.
+- `consistent-return` — our exhaustive `switch` over a tagged union returns in every case;
+  TypeScript proves that, and the rule cannot see it.
+
+`.repos`, `.agents` and `.claude` are excluded from both tools. They hold vendored,
+third-party content — the skill files are pinned by hash in `skills-lock.json`, so
+reformatting them would break that.
+
 ## Structural rules for this project
 
 These exist because the product depends on them, not as style preferences:

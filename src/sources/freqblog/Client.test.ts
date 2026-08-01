@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Config, ConfigProvider, Effect, Layer, Ref } from "effect"
+import { ConfigProvider, Effect, Layer, Ref } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 import { FreqBlog, FreqBlogLive } from "./Client.ts"
 import lookupFixture from "./fixtures/lookup.json" with { type: "json" }
@@ -12,7 +12,8 @@ const apiKeyLayer = ConfigProvider.layer(
       path.join(".") === "FREQBLOG_API_KEY"
         ? ConfigProvider.makeValue("test-key")
         : undefined
-    ))
+    )
+  )
 )
 
 /**
@@ -29,7 +30,8 @@ const stubHttp = (responses: ReadonlyArray<Response>) =>
           const index = yield* Ref.getAndUpdate(calls, (n) => n + 1)
           const response = responses[Math.min(index, responses.length - 1)]!
           return HttpClientResponse.fromWeb(request, response.clone())
-        }))
+        })
+      )
     })
   )
 

@@ -1,5 +1,5 @@
 import { NodeServices } from "@effect/platform-node"
-import { assert, describe, it, layer } from "@effect/vitest"
+import { assert, describe, layer } from "@effect/vitest"
 import { Effect, Layer, Ref, Schema } from "effect"
 import { SqlClient } from "effect/unstable/sql"
 import { TrackFacts } from "../domain/Recording.ts"
@@ -48,10 +48,13 @@ const countingFreqBlog = Layer.effect(FreqBlog)(
   })
 )
 
-const lookupCount = Effect.flatMap(FreqBlog, (service) =>
-  "lookupCount" in service && Effect.isEffect(service.lookupCount)
-    ? service.lookupCount
-    : Effect.succeed(-1))
+const lookupCount = Effect.flatMap(
+  FreqBlog,
+  (service) =>
+    "lookupCount" in service && Effect.isEffect(service.lookupCount)
+      ? service.lookupCount
+      : Effect.succeed(-1)
+)
 
 const StoreLive = Layer.mergeAll(RecordingRepoLive, FeatureRepoLive, ResolutionLogLive)
 

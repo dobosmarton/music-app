@@ -11,7 +11,10 @@
     "prepare": "./scripts/prepare-effect.sh",
     "cli": "node --env-file-if-exists=.env --experimental-strip-types --no-warnings src/cli/main.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "format": "dprint fmt",
+    "lint": "oxlint --type-aware && dprint check",
+    "lint:fix": "oxlint --type-aware --fix && dprint fmt"
   },
   "dependencies": {
     "@effect/platform-node": "beta",
@@ -22,6 +25,9 @@
     "@effect/language-service": "0.87.1",
     "@effect/vitest": "beta",
     "@types/node": "^26.1.2",
+    "dprint": "0.55.2",
+    "oxlint": "1.76.0",
+    "oxlint-tsgolint": "7.0.2001",
     "typescript": "7.0.2",
     "vitest": "^4.1.10"
   }

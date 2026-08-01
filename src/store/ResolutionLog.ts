@@ -1,7 +1,6 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { SqlClient } from "effect/unstable/sql"
 import type { SqlError } from "effect/unstable/sql"
-import type { Source } from "../domain/Provenance.ts"
 
 /**
  * A record of every attempt to resolve something, whether or not it reached the

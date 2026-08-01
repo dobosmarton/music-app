@@ -6,7 +6,7 @@ import { FeatureRepo } from "./FeatureRepo.ts"
 import { RecordingRepo } from "./RecordingRepo.ts"
 import { Attempt, ResolutionLog } from "./ResolutionLog.ts"
 
-const FREQBLOG: "freqblog" = "freqblog"
+const FREQBLOG = "freqblog" as const
 
 /** Whether an answer came from our own store or cost a request. */
 export type Origin = "store" | "upstream"

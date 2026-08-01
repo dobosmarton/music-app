@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "ignorePatterns": [
+    ".repos/**",
+    ".agents/**",
+    ".claude/**",
+    "node_modules/**",
+    "dist/**"
+  ],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "rules": {
+    "typescript/no-explicit-any": "error",
+    "typescript/consistent-type-imports": "error",
+
+    "eslint/no-underscore-dangle": "off",
+    "eslint/no-shadow": "off",
+    "typescript/consistent-return": "off"
+  }
+}

@@ -39,6 +39,16 @@ const retrySchedule = Schedule.exponential("500 millis", 1.5)
 
 const isRetryable = (error: FreqBlogError) => error._tag === "Unavailable"
 
+/** Decode failures become an adapter error; `SchemaError` never escapes this module. */
+const decodeAt = <A>(
+  endpoint: string,
+  decode: (input: unknown) => Effect.Effect<A, Schema.SchemaError>
+) =>
+(body: unknown) =>
+  decode(body).pipe(
+    Effect.catchTag("SchemaError", (error) => new UnexpectedResponse({ endpoint, detail: error.message }))
+  )
+
 export class FreqBlog extends Context.Service<FreqBlog, {
   /** Resolve one track. Fails with `NotInCatalog` when the catalogue does not have it. */
   readonly lookup: (query: TrackQuery) => Effect.Effect<TrackFacts, FreqBlogError>
@@ -177,17 +187,6 @@ export const FreqBlogLive = Layer.effect(FreqBlog)(
       }).pipe(
         permits.withPermits(1),
         Effect.retry({ schedule: retrySchedule, times: MAX_RETRY_ATTEMPTS, while: isRetryable })
-      )
-
-    /** Decode failures become an adapter error; `SchemaError` never escapes this module. */
-    const decodeAt = <A>(
-      endpoint: string,
-      decode: (input: unknown) => Effect.Effect<A, Schema.SchemaError>
-    ) =>
-    (body: unknown) =>
-      decode(body).pipe(
-        Effect.catchTag("SchemaError", (error) =>
-          new UnexpectedResponse({ endpoint, detail: error.message }))
       )
 
     const lookup = Effect.fn("FreqBlog.lookup")(function*(query: TrackQuery) {

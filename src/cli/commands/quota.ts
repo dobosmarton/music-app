@@ -7,8 +7,7 @@ import { StoreLive } from "../AppLayer.ts"
  * The free allowance resets monthly, so the month is the window that matters. A miss
  * is a spent request; a hit is one the store saved.
  */
-const startOfMonth = Effect.map(DateTime.now, (now) =>
-  DateTime.toDateUtc(DateTime.startOf(now, "month")))
+const startOfMonth = Effect.map(DateTime.now, (now) => DateTime.toDateUtc(DateTime.startOf(now, "month")))
 
 export const quota = Command.make("quota", {}, () =>
   Effect.gen(function*() {

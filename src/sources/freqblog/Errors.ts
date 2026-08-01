@@ -35,9 +35,7 @@ export class Unavailable extends Schema.TaggedErrorClass<Unavailable>()("Unavail
  * Distinct from `InvalidApiKey`, which means a key was sent and refused. Saying which
  * of the two happened is the difference between "go get a key" and "your key is wrong".
  */
-export class ApiKeyNotConfigured
-  extends Schema.TaggedErrorClass<ApiKeyNotConfigured>()("ApiKeyNotConfigured", {})
-{
+export class ApiKeyNotConfigured extends Schema.TaggedErrorClass<ApiKeyNotConfigured>()("ApiKeyNotConfigured", {}) {
   override get message() {
     return "FREQBLOG_API_KEY is not set. Request a free key at https://freqblog.com and put it in .env."
   }
