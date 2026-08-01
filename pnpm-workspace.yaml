@@ -1,0 +1,5 @@
+# msgpackr-extract is an optional native accelerator for msgpack serialisation.
+# Declining it costs a little speed on a path we do not use, and avoids running an
+# install script we have not vetted.
+allowBuilds:
+  msgpackr-extract: false

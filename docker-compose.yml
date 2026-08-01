@@ -1,0 +1,26 @@
+# One service. There is no queue, no cache server and no vector service —
+# fibers plus a Postgres work table cover the first, the cache is in-process,
+# and the vectors live next to the features they describe.
+services:
+  db:
+    image: pgvector/pgvector:pg18
+    environment:
+      POSTGRES_USER: music
+      POSTGRES_PASSWORD: music
+      POSTGRES_DB: music
+    # 5432 on this machine is already taken by a Homebrew Postgres, so the container
+    # is published on 5433 to avoid a collision.
+    ports:
+      - "5433:5432"
+    # Postgres 18 expects a single mount at /var/lib/postgresql and places its data in
+    # a subdirectory; mounting /var/lib/postgresql/data directly makes it refuse to start.
+    volumes:
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U music -d music"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  db-data:
