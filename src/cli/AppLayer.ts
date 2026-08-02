@@ -1,6 +1,7 @@
 import { NodeHttpClient } from "@effect/platform-node"
-import { Layer } from "effect"
+import { Config, Effect, Layer, Schema } from "effect"
 import { FreqBlogLive } from "../sources/freqblog/Client.ts"
+import { FreqBlogMockHttp } from "../sources/freqblog/mock/Server.ts"
 import { DatabaseLive } from "../store/Database.ts"
 import { FeatureRepoLive } from "../store/FeatureRepo.ts"
 import { RecordingRepoLive } from "../store/RecordingRepo.ts"
@@ -23,7 +24,26 @@ export const StoreLive = Layer.mergeAll(
   ResolutionLogLive
 ).pipe(Layer.provideMerge(DatabaseLive))
 
-const SourcesLive = FreqBlogLive.pipe(Layer.provide(NodeHttpClient.layerUndici))
+/**
+ * Which FreqBlog to talk to.
+ *
+ * `mock` swaps the transport, not the adapter: the real client — decoding, error
+ * mapping, retry, concurrency limit — runs unchanged on top of a fake server. A mode
+ * that replaced the adapter itself would let the two drift apart, and the mock would
+ * stop being evidence of anything.
+ */
+const FreqBlogMode = Schema.Literals(["live", "mock"])
+
+const freqBlogMode = Config.schema(FreqBlogMode, "FREQBLOG_MODE").pipe(
+  Config.withDefault("live" as const)
+)
+
+const SourcesLive = Layer.unwrap(
+  Effect.map(freqBlogMode, (mode) =>
+    FreqBlogLive.pipe(
+      Layer.provide(mode === "mock" ? FreqBlogMockHttp : NodeHttpClient.layerUndici)
+    ))
+)
 
 /** The store plus the upstream. Needed only by commands that may have to fetch. */
 export const CatalogLive = Layer.mergeAll(StoreLive, SourcesLive)
