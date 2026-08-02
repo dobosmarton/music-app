@@ -1,6 +1,8 @@
-import { Effect, Option } from "effect"
+import { Effect, Option, Runtime, Schema } from "effect"
+import { SqlClient } from "effect/unstable/sql"
 import type { TrackQuery } from "../domain/Identity.ts"
 import { KnownRecording } from "../domain/Recording.ts"
+import { NO_TRACK } from "../ExitCode.ts"
 import { FreqBlog } from "../sources/freqblog/Client.ts"
 import { FeatureRepo } from "./FeatureRepo.ts"
 import { RecordingRepo } from "./RecordingRepo.ts"
@@ -17,6 +19,26 @@ export interface Resolution {
 }
 
 /**
+ * A vendor id we do not already hold, which no upstream call can turn into features.
+ *
+ * FreqBlog's `/lookup` takes a name, an ISRC, an MBID or a Spotify id — never the
+ * `itunes_track_id` its own `/similar` returns. So a candidate has to be re-identified by
+ * name or ISRC before it can be hydrated, and a bare vendor ref that missed our store is
+ * a dead end rather than a cache miss worth spending a request on.
+ */
+export class NotResolvableUpstream extends Schema.TaggedErrorClass<NotResolvableUpstream>()("NotResolvableUpstream", {
+  namespace: Schema.String,
+  value: Schema.String
+}) {
+  // An answer, not a malfunction.
+  override readonly [Runtime.errorReported] = false
+  override readonly [Runtime.errorExitCode] = NO_TRACK
+  override get message() {
+    return `${this.namespace} id ${this.value} is not in the store, and cannot be resolved upstream by id alone.`
+  }
+}
+
+/**
  * Resolve a track, preferring what we already know.
  *
  * This is the read-through: the store is consulted first, the upstream only on a miss,
@@ -29,6 +51,7 @@ export interface Resolution {
  */
 export const resolveRecording = Effect.fn("Catalog.resolveRecording")(
   function*(query: TrackQuery) {
+    const sql = yield* SqlClient.SqlClient
     const recordings = yield* RecordingRepo
     const features = yield* FeatureRepo
     const log = yield* ResolutionLog
@@ -48,13 +71,37 @@ export const resolveRecording = Effect.fn("Catalog.resolveRecording")(
       }
     }
 
+    if (query._tag === "ByExternalRef") {
+      return yield* new NotResolvableUpstream({
+        namespace: query.ref.namespace,
+        value: query.ref.value
+      })
+    }
+
     const facts = yield* freqblog.lookup(query)
     yield* log.record(
       new Attempt({ source: FREQBLOG, endpoint: "/lookup", cacheHit: false })
     )
 
-    const recordingId = yield* recordings.upsert(facts)
-    yield* features.upsert({ recordingId, source: FREQBLOG, values: facts.features })
+    /**
+     * The recording and its features land together or not at all.
+     *
+     * Written separately, a failure between the two leaves a recording with no
+     * features — and because the read-through treats any stored recording as a hit,
+     * that gap would be served as an answer forever rather than being re-fetched.
+     */
+    const recordingId = yield* sql.withTransaction(
+      Effect.gen(function*() {
+        const id = yield* recordings.upsert(facts)
+        yield* features.upsert({
+          recordingId: id,
+          source: FREQBLOG,
+          quality: facts.quality,
+          values: facts.features
+        })
+        return id
+      })
+    )
 
     const recording = yield* recordings.findById(recordingId)
     if (Option.isNone(recording)) {

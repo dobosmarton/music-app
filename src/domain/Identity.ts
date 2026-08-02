@@ -52,3 +52,14 @@ export const TrackQuery = Schema.Union([
   })
 ])
 export type TrackQuery = typeof TrackQuery.Type
+
+/**
+ * The subset of `TrackQuery` an upstream can actually answer with audio features.
+ *
+ * `ByExternalRef` is excluded deliberately. FreqBlog's `/lookup` accepts a name, an ISRC,
+ * an MBID or a Spotify id — there is no parameter that takes the `itunes_track_id` its
+ * own `/similar` hands back, and `/v1/audio-features/{identifier}` resolves only Spotify
+ * ids and ISRCs. So a vendor id is a fine key for our store and a dead end upstream, and
+ * that asymmetry is better expressed in the type than discovered by a 422.
+ */
+export type UpstreamQuery = Exclude<TrackQuery, { readonly _tag: "ByExternalRef" }>

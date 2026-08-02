@@ -1,9 +1,11 @@
 import { Config, Context, Effect, Layer, Redacted, Schedule, Schema, Semaphore } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
-import type { TrackQuery } from "../../domain/Identity.ts"
-import { TrackFacts } from "../../domain/Recording.ts"
+import type { UpstreamQuery } from "../../domain/Identity.ts"
+import { TrackCandidate, TrackFacts } from "../../domain/Recording.ts"
+import type { FeatureQuality } from "../../domain/Recording.ts"
 import {
   ApiKeyNotConfigured,
+  IngestQueued,
   InvalidApiKey,
   NotInCatalog,
   QuotaExceeded,
@@ -11,7 +13,8 @@ import {
   UnexpectedResponse
 } from "./Errors.ts"
 import type { FreqBlogError } from "./Errors.ts"
-import { WireTrack, WireTrackList } from "./Schemas.ts"
+import { WireEmbeddingResponse, WireRecommendationsResponse, WireSimilarResponse, WireTrackLookup } from "./Schemas.ts"
+import type { WireScoredTrack, WireTrackStub } from "./Schemas.ts"
 
 const BASE_URL = "https://api.freqblog.com"
 
@@ -22,7 +25,7 @@ const MAX_CONCURRENT_REQUESTS = 6
  * How long `/lookup` may hold the connection while ingesting an unknown track.
  *
  * This stands in for a webhook receiver: a single-user CLI can afford to wait a few
- * seconds rather than run a public callback endpoint.
+ * seconds rather than run a public callback endpoint. The upstream caps this at 25.
  */
 const INGEST_WAIT_SECONDS = 10
 
@@ -49,22 +52,96 @@ const decodeAt = <A>(
     Effect.catchTag("SchemaError", (error) => new UnexpectedResponse({ endpoint, detail: error.message }))
   )
 
+/** How the upstream's genre re-ranking should be applied to a candidate list. */
+export type CrossGenre = "auto" | "allow" | "strict"
+
 export class FreqBlog extends Context.Service<FreqBlog, {
   /** Resolve one track. Fails with `NotInCatalog` when the catalogue does not have it. */
-  readonly lookup: (query: TrackQuery) => Effect.Effect<TrackFacts, FreqBlogError>
-  /** Acoustically nearest neighbours of a track already known to FreqBlog. */
+  readonly lookup: (query: UpstreamQuery) => Effect.Effect<TrackFacts, FreqBlogError>
+  /**
+   * Acoustically nearest neighbours of a catalogue track.
+   *
+   * Returns identity only — see `TrackCandidate`. Anything acoustic needs a `lookup` per
+   * candidate.
+   */
   readonly similar: (
-    options: { readonly trackId: string; readonly limit: number }
-  ) => Effect.Effect<ReadonlyArray<TrackFacts>, FreqBlogError>
-  /** Recommendations from up to five seed tracks. */
+    options: {
+      readonly trackId: string
+      readonly limit: number
+      readonly excludeSameArtist?: boolean
+      readonly crossGenre?: CrossGenre
+    }
+  ) => Effect.Effect<ReadonlyArray<TrackCandidate>, FreqBlogError>
+  /** Recommendations from up to five seed tracks. Identity only, as `similar`. */
   readonly recommendations: (
-    options: { readonly seedTrackIds: ReadonlyArray<string>; readonly limit: number }
-  ) => Effect.Effect<ReadonlyArray<TrackFacts>, FreqBlogError>
+    options: {
+      readonly seedTrackIds: ReadonlyArray<string>
+      readonly limit: number
+      readonly excludeSeedArtists?: boolean
+      readonly crossGenre?: CrossGenre
+    }
+  ) => Effect.Effect<ReadonlyArray<TrackCandidate>, FreqBlogError>
+  /**
+   * The upstream's own feature vector for a track, with a mask marking real positions.
+   *
+   * Positions whose mask entry is `false` are filler and must be dropped before any
+   * distance is computed, or sparsely-analysed tracks look close to everything.
+   */
+  readonly embedding: (
+    trackId: string
+  ) => Effect.Effect<
+    { readonly fields: ReadonlyArray<string>; readonly values: ReadonlyArray<number> },
+    FreqBlogError
+  >
 }>()("FreqBlog") {}
 
-const decodeWireTrack = Schema.decodeUnknownEffect(WireTrack)
-const decodeWireTrackList = Schema.decodeUnknownEffect(WireTrackList)
+const decodeLookup = Schema.decodeUnknownEffect(WireTrackLookup)
+const decodeSimilar = Schema.decodeUnknownEffect(WireSimilarResponse)
+const decodeRecommendations = Schema.decodeUnknownEffect(WireRecommendationsResponse)
+const decodeEmbedding = Schema.decodeUnknownEffect(WireEmbeddingResponse)
 const decodeTrackFacts = Schema.decodeUnknownEffect(TrackFacts)
+const decodeTrackCandidate = Schema.decodeUnknownEffect(TrackCandidate)
+
+/** `release_date` arrives as an ISO date; the domain keeps only the year. */
+const yearOf = (releaseDate: string | null | undefined) => {
+  if (releaseDate == null) return undefined
+  const year = Number.parseInt(releaseDate.slice(0, 4), 10)
+  return Number.isNaN(year) ? undefined : year
+}
+
+/**
+ * Whether these numbers are settled.
+ *
+ * A first lookup of an uncatalogued track answers from a fast preview analysis and
+ * queues the real one, so the values can change minutes later. Treating that as final
+ * would quietly contaminate any baseline measured against it.
+ */
+const qualityOf = (wire: WireTrackLookup): FeatureQuality =>
+  wire.backfill_status === "queued" || wire.feature_source?.endsWith("_preview") === true
+    ? "provisional"
+    : "final"
+
+/** The identity fields `WireTrackLookup` and `WireTrackStub` have in common. */
+interface WireIdentity {
+  readonly track_name: string
+  readonly artist_name: string
+  readonly mbid?: string | null | undefined
+  readonly isrc?: string | null | undefined
+  readonly duration_ms?: number | null | undefined
+  readonly release_date?: string | null | undefined
+}
+
+const identityInput = (wire: WireIdentity) => {
+  const year = yearOf(wire.release_date)
+  return {
+    title: wire.track_name,
+    artist: wire.artist_name,
+    ...(wire.mbid == null ? {} : { mbid: wire.mbid }),
+    ...(wire.isrc == null ? {} : { isrc: wire.isrc }),
+    ...(wire.duration_ms == null ? {} : { durationMs: wire.duration_ms }),
+    ...(year === undefined ? {} : { releaseYear: year })
+  }
+}
 
 /**
  * Vendor shape to domain shape.
@@ -73,14 +150,10 @@ const decodeTrackFacts = Schema.decodeUnknownEffect(TrackFacts)
  * schema does the validating and applies its brands. That keeps the only path into
  * `TrackFacts` a validated one.
  */
-const toTrackFactsInput = (wire: WireTrack) => ({
-  title: wire.title,
-  artist: wire.artist,
-  ...(wire.mbid == null ? {} : { mbid: wire.mbid }),
-  ...(wire.isrc == null ? {} : { isrc: wire.isrc }),
-  ...(wire.duration_ms == null ? {} : { durationMs: wire.duration_ms }),
-  ...(wire.release_year == null ? {} : { releaseYear: wire.release_year }),
-  externalRef: { namespace: "freqblog", value: wire.id },
+const toTrackFactsInput = (wire: WireTrackLookup) => ({
+  ...identityInput(wire),
+  externalRef: { namespace: "freqblog", value: wire.itunes_track_id },
+  quality: qualityOf(wire),
   features: {
     ...(wire.bpm == null ? {} : { bpm: wire.bpm }),
     ...(wire.bpm_confidence == null ? {} : { bpmConfidence: wire.bpm_confidence }),
@@ -89,34 +162,47 @@ const toTrackFactsInput = (wire: WireTrack) => ({
     ...(wire.valence == null ? {} : { valence: wire.valence }),
     ...(wire.danceability == null ? {} : { danceability: wire.danceability }),
     ...(wire.acousticness == null ? {} : { acousticness: wire.acousticness }),
-    ...(wire.loudness == null ? {} : { loudnessDb: wire.loudness }),
+    ...(wire.loudness_db == null ? {} : { loudnessDb: wire.loudness_db }),
     ...(wire.mood == null ? {} : { mood: wire.mood }),
-    ...(wire.genres == null ? {} : { genres: wire.genres }),
-    ...(wire.embedding == null ? {} : { embedding: wire.embedding })
+    // The wire carries a single genre string, unnormalised — `elektronisch` and
+    // `electronic` both occur. The domain keeps a list; normalisation is a later concern.
+    ...(wire.genre == null ? {} : { genres: [wire.genre] })
   }
 })
 
-const queryParams = (query: TrackQuery): Record<string, string> => {
+const toTrackCandidateInput = (
+  stub: WireTrackStub,
+  score: number,
+  genreRelation: string | null | undefined
+) => ({
+  ...identityInput(stub),
+  externalRef: { namespace: "freqblog", value: stub.itunes_track_id },
+  score,
+  ...(genreRelation == null ? {} : { genreRelation }),
+  ...(stub.genre == null ? {} : { genre: stub.genre })
+})
+
+/**
+ * `/lookup` takes exactly one of `track`, `isrc`, `mbid` or `spotify_id`; `artist` only
+ * narrows a `track`. Sending more than one is a 422.
+ */
+const queryParams = (query: UpstreamQuery): Record<string, string> => {
   switch (query._tag) {
     case "ByIsrc":
       return { isrc: query.isrc }
     case "ByMbid":
       return { mbid: query.mbid }
-    case "ByExternalRef":
-      return { track_id: query.ref.value }
     case "ByName":
-      return { artist: query.artist, track: query.title }
+      return { track: query.title, artist: query.artist }
   }
 }
 
-const describeQuery = (query: TrackQuery): string => {
+const describeQuery = (query: UpstreamQuery): string => {
   switch (query._tag) {
     case "ByIsrc":
       return `isrc ${query.isrc}`
     case "ByMbid":
       return `mbid ${query.mbid}`
-    case "ByExternalRef":
-      return `${query.ref.namespace} ${query.ref.value}`
     case "ByName":
       return `${query.artist} — ${query.title}`
   }
@@ -148,9 +234,9 @@ export const FreqBlogLive = Layer.effect(FreqBlog)(
     /**
      * One request, with every non-success status turned into a typed outcome.
      *
-     * Statuses are interpreted here rather than through `filterStatusOk` so that 404
-     * stays distinguishable from a malfunction — it is a normal answer about the
-     * catalogue, not a failure of it.
+     * Statuses are interpreted here rather than through `filterStatusOk` so that 404 and
+     * 202 stay distinguishable from a malfunction — one is a normal answer about the
+     * catalogue, the other a promise of a later one.
      */
     const request = (endpoint: string, params: Record<string, string>, label: string) =>
       Effect.gen(function*() {
@@ -158,6 +244,10 @@ export const FreqBlogLive = Layer.effect(FreqBlog)(
           Effect.catchTag("HttpClientError", (cause) => new Unavailable({ endpoint, cause }))
         )
 
+        // A name that matched nothing: analysis has been queued and will land in 30s–2min.
+        if (response.status === 202) {
+          return yield* new IngestQueued({ query: label })
+        }
         if (response.status === 404) {
           return yield* new NotInCatalog({ query: label })
         }
@@ -189,44 +279,75 @@ export const FreqBlogLive = Layer.effect(FreqBlog)(
         Effect.retry({ schedule: retrySchedule, times: MAX_RETRY_ATTEMPTS, while: isRetryable })
       )
 
-    const lookup = Effect.fn("FreqBlog.lookup")(function*(query: TrackQuery) {
+    const lookup = Effect.fn("FreqBlog.lookup")(function*(query: UpstreamQuery) {
       const body = yield* request(
         "/lookup",
         { ...queryParams(query), wait: String(INGEST_WAIT_SECONDS) },
         describeQuery(query)
       )
-      const wire = yield* decodeAt("/lookup", decodeWireTrack)(body)
+      const wire = yield* decodeAt("/lookup", decodeLookup)(body)
       return yield* decodeAt("/lookup", decodeTrackFacts)(toTrackFactsInput(wire))
     })
 
-    const fetchList = (endpoint: string) =>
-      Effect.fn(`FreqBlog${endpoint}`)(function*(params: Record<string, string>, label: string) {
-        const body = yield* request(endpoint, params, label)
-        const wire = yield* decodeAt(endpoint, decodeWireTrackList)(body)
-        return yield* Effect.forEach(
-          wire.tracks,
-          (track) => decodeAt(endpoint, decodeTrackFacts)(toTrackFactsInput(track))
-        )
-      })
+    const toCandidates = (endpoint: string) => (scored: ReadonlyArray<WireScoredTrack>) =>
+      Effect.forEach(
+        scored,
+        (result) =>
+          decodeAt(endpoint, decodeTrackCandidate)(
+            toTrackCandidateInput(result.track, result.score, result.genre_relation)
+          )
+      )
 
-    const fetchSimilar = fetchList("/similar")
-    const fetchRecommendations = fetchList("/recommendations")
+    const similar = Effect.fn("FreqBlog.similar")(function*(options: {
+      readonly trackId: string
+      readonly limit: number
+      readonly excludeSameArtist?: boolean
+      readonly crossGenre?: CrossGenre
+    }) {
+      const body = yield* request("/similar", {
+        track_id: options.trackId,
+        limit: String(options.limit),
+        exclude_same_artist: String(options.excludeSameArtist ?? false),
+        cross_genre: options.crossGenre ?? "auto"
+      }, `similar to ${options.trackId}`)
+      const wire = yield* decodeAt("/similar", decodeSimilar)(body)
+      return yield* toCandidates("/similar")(wire.results)
+    })
 
-    return {
-      lookup,
-      similar: (options: { readonly trackId: string; readonly limit: number }) =>
-        fetchSimilar(
-          { track_id: options.trackId, limit: String(options.limit) },
-          `similar to ${options.trackId}`
-        ),
-      recommendations: (options: {
-        readonly seedTrackIds: ReadonlyArray<string>
-        readonly limit: number
-      }) =>
-        fetchRecommendations(
-          { seed_tracks: options.seedTrackIds.join(","), limit: String(options.limit) },
-          `recommendations from ${options.seedTrackIds.join(", ")}`
-        )
-    }
+    const recommendations = Effect.fn("FreqBlog.recommendations")(function*(options: {
+      readonly seedTrackIds: ReadonlyArray<string>
+      readonly limit: number
+      readonly excludeSeedArtists?: boolean
+      readonly crossGenre?: CrossGenre
+    }) {
+      const label = `recommendations from ${options.seedTrackIds.join(", ")}`
+      const body = yield* request("/recommendations", {
+        seed_tracks: options.seedTrackIds.join(","),
+        limit: String(options.limit),
+        exclude_seed_artists: String(options.excludeSeedArtists ?? false),
+        cross_genre: options.crossGenre ?? "auto"
+      }, label)
+      const wire = yield* decodeAt("/recommendations", decodeRecommendations)(body)
+      return yield* toCandidates("/recommendations")(wire.tracks)
+    })
+
+    const embedding = Effect.fn("FreqBlog.embedding")(function*(trackId: string) {
+      const body = yield* request(
+        `/track/${encodeURIComponent(trackId)}/embedding`,
+        {},
+        `embedding for ${trackId}`
+      )
+      const wire = yield* decodeAt("/embedding", decodeEmbedding)(body)
+      // Drop filler positions here so no caller can forget to.
+      const kept = wire.embedding.flatMap((value, index) =>
+        wire.embedding_mask[index] === true ? [{ field: wire.fields[index] ?? "", value }] : []
+      )
+      return {
+        fields: kept.map((entry) => entry.field),
+        values: kept.map((entry) => entry.value)
+      }
+    })
+
+    return { lookup, similar, recommendations, embedding }
   })
 )

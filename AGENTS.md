@@ -45,6 +45,24 @@ rather than because they found something we did not want to fix:
 third-party content — the skill files are pinned by hash in `skills-lock.json`, so
 reformatting them would break that.
 
+## Running against the mock
+
+`FREQBLOG_MODE=mock` swaps the HTTP transport for a seeded in-process catalogue of 24
+synthetic tracks — no key, no quota, no network. Use it for local development and for
+anything that would otherwise spend the 1,000-request monthly allowance.
+
+It is deliberately an `HttpClient` layer, not a fake `FreqBlog` service. A stubbed
+service would bypass the decoding, the status-to-error mapping and the retry policy —
+exactly the code most likely to be wrong — so the real adapter runs unchanged on top of
+a fake server instead, and the mock cannot drift from the wire contract without
+`mock/Server.test.ts` failing.
+
+Every name in `mock/Catalogue.ts` is invented, so a mock number can never be mistaken for
+a measurement. Real evaluation seeds must come from the live API.
+
+`FREQBLOG_MOCK_QUOTA=<n>` makes the mock return 429 after `n` requests, so the
+`QuotaExceeded` path can be exercised without waiting for a real allowance to run out.
+
 ## Structural rules for this project
 
 These exist because the product depends on them, not as style preferences:
@@ -57,3 +75,13 @@ These exist because the product depends on them, not as style preferences:
 - **`instrumentalness` is not stored.** The upstream flags it unreliable; vocal
   detection comes from `lyric_signal` instead.
 - **Nothing Spotify-derived may be persisted.** Resolve, use, discard.
+- **A candidate is not a track.** FreqBlog's `/similar` and `/recommendations` return
+  identity only — no BPM, key or energy. They decode to `TrackCandidate`, never
+  `TrackFacts`, so nothing downstream can assume features it was never given.
+- **A vendor id is not a lookup key.** `/lookup` accepts a name, ISRC, MBID or Spotify
+  id; there is no parameter for the `itunes_track_id` that `/similar` hands back, and
+  `/v1/audio-features/{identifier}` takes only Spotify ids and ISRCs. Hydration goes by
+  ISRC or by name. `UpstreamQuery` excludes `ByExternalRef` for this reason.
+- **Features carry a `quality`.** A first lookup of an uncatalogued track answers from
+  `essentia_preview` with a backfill queued, and those numbers change. `provisional`
+  values must never be silently folded into an evaluation baseline.

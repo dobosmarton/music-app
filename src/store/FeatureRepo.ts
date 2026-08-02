@@ -4,7 +4,7 @@ import type { SqlError } from "effect/unstable/sql"
 import type { RecordingId } from "../domain/Identity.ts"
 import type { Source } from "../domain/Provenance.ts"
 import { Features } from "../domain/Recording.ts"
-import type { FeatureValues } from "../domain/Recording.ts"
+import type { FeatureQuality, FeatureValues } from "../domain/Recording.ts"
 
 /**
  * See `RecordingRepo` for why rows arrive as null-stripped JSON.
@@ -14,7 +14,7 @@ import type { FeatureValues } from "../domain/Recording.ts"
  * Its text form is already valid JSON, which is why the round trip is this cheap.
  */
 const featureDocument = "json_strip_nulls(json_build_object(" +
-  "'recordingId', f.recording_id, 'source', f.source, 'bpm', f.bpm," +
+  "'recordingId', f.recording_id, 'source', f.source, 'quality', f.quality, 'bpm', f.bpm," +
   "'bpmConfidence', f.bpm_confidence, 'keyCamelot', f.key_camelot, 'energy', f.energy," +
   "'valence', f.valence, 'danceability', f.danceability, 'acousticness', f.acousticness," +
   "'loudnessDb', f.loudness_db, 'mood', f.mood, 'genres', f.genres," +
@@ -32,6 +32,7 @@ export class FeatureRepo extends Context.Service<FeatureRepo, {
     options: {
       readonly recordingId: RecordingId
       readonly source: Source
+      readonly quality: FeatureQuality
       readonly values: FeatureValues
     }
   ) => Effect.Effect<void, RepoError>
@@ -59,16 +60,18 @@ export const FeatureRepoLive = Layer.effect(FeatureRepo)(
     const upsert = Effect.fn("FeatureRepo.upsert")(function*(options: {
       readonly recordingId: RecordingId
       readonly source: Source
+      readonly quality: FeatureQuality
       readonly values: FeatureValues
     }) {
       const { source, values } = options
       yield* sql`
         INSERT INTO feature (
-          recording_id, source, fetched_at, bpm, bpm_confidence, key_camelot,
+          recording_id, source, quality, fetched_at, bpm, bpm_confidence, key_camelot,
           energy, valence, danceability, acousticness, loudness_db, mood, genres, embedding
         ) VALUES (
           ${options.recordingId}::uuid,
           ${source},
+          ${options.quality},
           now(),
           ${values.bpm ?? null},
           ${values.bpmConfidence ?? null},
@@ -83,6 +86,7 @@ export const FeatureRepoLive = Layer.effect(FeatureRepo)(
           ${values.embedding === undefined ? null : JSON.stringify(values.embedding)}::vector
         )
         ON CONFLICT (recording_id, source) DO UPDATE SET
+          quality = excluded.quality,
           fetched_at = excluded.fetched_at,
           bpm = excluded.bpm,
           bpm_confidence = excluded.bpm_confidence,

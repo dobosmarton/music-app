@@ -34,7 +34,9 @@ export const trackLookup = Command.make("track:lookup", {
     if (recording.isrc !== undefined) {
       yield* Console.log(`  isrc ${recording.isrc}`)
     }
-    yield* Effect.forEach(describeFeatures(resolved.known.features), Console.log)
+    // Passed point-free, `Console.log` would also receive `forEach`'s index argument
+    // and print it — it is variadic.
+    yield* Effect.forEach(describeFeatures(resolved.known.features), (line) => Console.log(line))
   })).pipe(
     Command.provide(CatalogLive),
     Command.withDescription("Resolve a track, from the store if we already know it.")

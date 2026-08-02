@@ -1,0 +1,58 @@
+{
+  "seeds": [{ "id": "281116081", "found": true }],
+  "seed_query": null,
+  "count": 3,
+  "tracks": [
+    {
+      "track": {
+        "itunes_track_id": "1128831476",
+        "track_name": "Running Blind",
+        "artist_name": "Noisia",
+        "album_name": "Purpose",
+        "popularity": 55,
+        "mbid": null,
+        "isrc": "USQY51530339",
+        "genre": "elektronisch",
+        "release_date": "2014-07-14",
+        "duration_ms": 334360,
+        "explicit": false
+      },
+      "genre_relation": "same",
+      "score": 0.9887
+    },
+    {
+      "track": {
+        "itunes_track_id": "1642911742",
+        "track_name": "Champions Never Give Up",
+        "artist_name": "Joachim Pastor",
+        "album_name": "The Winning Line",
+        "popularity": 55,
+        "mbid": null,
+        "isrc": "FR9W12221700",
+        "genre": "electronic",
+        "release_date": "2022-09-23",
+        "duration_ms": 285392,
+        "explicit": false
+      },
+      "genre_relation": "same",
+      "score": 0.9779
+    },
+    {
+      "track": {
+        "itunes_track_id": "1613152681",
+        "track_name": "Yin (FSOE 743) [Sean & Dee Remix]",
+        "artist_name": "Paul Thomas & Fuenka",
+        "album_name": "FSOE 743 - Future Sound of Egypt Episode 743",
+        "popularity": 55,
+        "mbid": null,
+        "isrc": "UKRMQ2200257",
+        "genre": "house",
+        "release_date": "2022-03-07",
+        "duration_ms": 260000,
+        "explicit": false
+      },
+      "genre_relation": "same",
+      "score": 0.9759
+    }
+  ]
+}
